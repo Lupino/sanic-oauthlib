@@ -473,10 +473,10 @@ class OAuthRemoteApp(object):
         )
 
         log.debug('Request %r with %r method' % (uri, method))
-        http_session = aiohttp.ClientSession()
-        resp = await http_session._request(method, uri, headers=headers, data=data)
-        content = await resp.text()
-        return resp, content
+        async with aiohttp.ClientSession() as client:
+            async with client.request(method, uri, headers=headers, data=data) as resp:
+                content = await resp.text()
+                return resp, content
 
     async def get(self, *args, **kwargs):
         """Sends a ``GET`` request. Accepts the same parameters as
