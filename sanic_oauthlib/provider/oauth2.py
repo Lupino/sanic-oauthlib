@@ -362,7 +362,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
             return ctx.app.url_for(error_endpoint)
         return '/oauth/errors'
 
-    def verify_request(self, request, scopes):
+    async def verify_request(self, request, scopes):
         """Verify current request, get the oauth data.
 
         If you can't use the ``require_oauth`` decorator, you can fetch
@@ -374,7 +374,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
                     return jsonify(user=req.user)
                 return jsonify(status='error')
         """
-        return self.plugin.verify_request(request, scopes, self)
+        return await self.plugin.verify_request(request, scopes, self)
 
 
     def authorize_handler(self, f):
@@ -406,7 +406,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
                 redirect_uri = request.args.get('redirect_uri', self.error_uri)
                 log.debug('Found redirect_uri %s.', redirect_uri)
                 try:
-                    ret = server.validate_authorization_request(
+                    ret = await server.validate_authorization_request(
                         uri, http_method, body, headers
                     )
                     scopes, credentials = ret
@@ -489,7 +489,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
                 credentials = await credentials
             credentials = credentials or {}
             log.debug('Fetched extra credentials, %r.', credentials)
-            ret = server.create_token_response(
+            ret = await server.create_token_response(
                 uri, http_method, body, headers, credentials
             )
             return create_response(*ret)
@@ -513,7 +513,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
         .. _`RFC7009`: http://tools.ietf.org/html/rfc7009
         """
         @wraps(_f)
-        def decorated(request, *args, **kwargs):
+        async def decorated(request, *args, **kwargs):
             nonlocal self
             server = self.server
             token = request.args.get('token')
@@ -522,7 +522,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
                 request.token = token
 
             uri, http_method, body, headers = extract_params(request)
-            ret = server.create_revocation_response(
+            ret = await server.create_revocation_response(
                 uri, headers=headers, body=body, http_method=http_method)
             return create_response(*ret)
         return decorated
@@ -544,7 +544,7 @@ class OAuth2ProviderAssociated(PluginAssociated):
                 _oauth = request_context.get('oauth', None)
                 if _oauth:
                     return f(request, *args, context=context, **kwargs)
-                valid, req = plug.verify_request(request, scopes, self)
+                valid, req = await plug.verify_request(request, scopes, self)
 
                 for func in context._after_request_funcs:
                     r = func(valid, req)
@@ -674,7 +674,7 @@ class OAuth2Provider(SanicPlugin):
             update_credentials(shared_request_context)
             if session:
                 update_credentials(session)
-            ret = server.create_authorization_response(
+            ret = await server.create_authorization_response(
                 uri, http_method, body, headers, scopes, credentials)
             log.debug('Authorization successful.')
             return create_response(*ret)
@@ -695,7 +695,7 @@ class OAuth2Provider(SanicPlugin):
             ))
 
     @classmethod
-    def verify_request(cls, request, scopes, assoc):
+    async def verify_request(cls, request, scopes, assoc):
         """Verify current request, get the oauth data.
 
         If you can't use the ``require_oauth`` decorator, you can fetch
@@ -709,7 +709,7 @@ class OAuth2Provider(SanicPlugin):
         """
         server = assoc.server
         uri, http_method, body, headers = extract_params(request)
-        return server.verify_request(uri, http_method, body, headers, scopes)
+        return await server.verify_request(uri, http_method, body, headers, scopes)
 
 
 instance = oauth2provider = OAuth2Provider()
@@ -760,7 +760,7 @@ class OAuth2RequestValidator(RequestValidator):
 
         return None, None
 
-    def client_authentication_required(self, request, *args, **kwargs):
+    async def client_authentication_required(self, request, *args, **kwargs):
         """Determine if client authentication is required for current request.
 
         According to the rfc6749, client authentication is required in the
@@ -785,12 +785,12 @@ class OAuth2RequestValidator(RequestValidator):
         grant_types = ('password', 'authorization_code', 'refresh_token')
         client_id, _ = self._get_client_creds_from_request(request)
         if client_id and request.grant_type in grant_types:
-            client = self._clientgetter(client_id)
+            client = await self._clientgetter(client_id)
             if client:
                 return is_confidential(client)
         return False
 
-    def authenticate_client(self, request, *args, **kwargs):
+    async def authenticate_client(self, request, *args, **kwargs):
         """Authenticate itself in other means.
 
         Other means means is described in `Section 3.2.1`_.
@@ -800,7 +800,7 @@ class OAuth2RequestValidator(RequestValidator):
         client_id, client_secret = self._get_client_creds_from_request(request)
         log.debug('Authenticate client %r', client_id)
 
-        client = self._clientgetter(client_id)
+        client = await self._clientgetter(client_id)
         if not client:
             log.debug('Authenticate client failed, client not found.')
             return False
@@ -816,7 +816,7 @@ class OAuth2RequestValidator(RequestValidator):
         log.debug('Authenticate client success.')
         return True
 
-    def authenticate_client_id(self, client_id, request, *args, **kwargs):
+    async def authenticate_client_id(self, client_id, request, *args, **kwargs):
         """Authenticate a non-confidential client.
 
         :param client_id: Client ID of the non-confidential client
@@ -826,7 +826,7 @@ class OAuth2RequestValidator(RequestValidator):
             client_id, _ = self._get_client_creds_from_request(request)
 
         log.debug('Authenticate client %r.', client_id)
-        client = request.client or self._clientgetter(client_id)
+        client = request.client or await self._clientgetter(client_id)
         if not client:
             log.debug('Authenticate failed, client not found.')
             return False
@@ -835,7 +835,7 @@ class OAuth2RequestValidator(RequestValidator):
         request.client = client
         return True
 
-    def confirm_redirect_uri(self, client_id, code, redirect_uri, client,
+    async def confirm_redirect_uri(self, client_id, code, redirect_uri, client,
                              *args, **kwargs):
         """Ensure client is authorized to redirect to the redirect_uri.
 
@@ -844,10 +844,10 @@ class OAuth2RequestValidator(RequestValidator):
         add a `validate_redirect_uri` function on grant for a customized
         validation.
         """
-        client = client or self._clientgetter(client_id)
+        client = client or await self._clientgetter(client_id)
         log.debug('Confirm redirect uri for client %r and code %r.',
                   client.client_id, code)
-        grant = self._grantgetter(client_id=client.client_id, code=code)
+        grant = await self._grantgetter(client_id=client.client_id, code=code)
         if not grant:
             log.debug('Grant not found.')
             return False
@@ -863,7 +863,7 @@ class OAuth2RequestValidator(RequestValidator):
 
         return grant.redirect_uri == redirect_uri
 
-    def get_original_scopes(self, refresh_token, request, *args, **kwargs):
+    async def get_original_scopes(self, refresh_token, request, *args, **kwargs):
         """Get the list of scopes associated with the refresh token.
 
         This method is used in the refresh token grant flow.  We return
@@ -871,10 +871,10 @@ class OAuth2RequestValidator(RequestValidator):
         new access token.
         """
         log.debug('Obtaining scope of refreshed token.')
-        tok = self._tokengetter(refresh_token=refresh_token)
+        tok = await self._tokengetter(refresh_token=refresh_token)
         return tok.scopes
 
-    def confirm_scopes(self, refresh_token, scopes, request, *args, **kwargs):
+    async def confirm_scopes(self, refresh_token, scopes, request, *args, **kwargs):
         """Ensures the requested scope matches the scope originally granted
         by the resource owner. If the scope is omitted it is treated as equal
         to the scope originally granted by the resource owner.
@@ -888,24 +888,24 @@ class OAuth2RequestValidator(RequestValidator):
             return True
         log.debug('Confirm scopes %r for refresh token %r',
                   scopes, refresh_token)
-        tok = self._tokengetter(refresh_token=refresh_token)
+        tok = await self._tokengetter(refresh_token=refresh_token)
         return set(tok.scopes) == set(scopes)
 
-    def get_default_redirect_uri(self, client_id, request, *args, **kwargs):
+    async def get_default_redirect_uri(self, client_id, request, *args, **kwargs):
         """Default redirect_uri for the given client."""
-        request.client = request.client or self._clientgetter(client_id)
+        request.client = request.client or await self._clientgetter(client_id)
         redirect_uri = request.client.default_redirect_uri
         log.debug('Found default redirect uri %r', redirect_uri)
         return redirect_uri
 
-    def get_default_scopes(self, client_id, request, *args, **kwargs):
+    async def get_default_scopes(self, client_id, request, *args, **kwargs):
         """Default scopes for the given client."""
-        request.client = request.client or self._clientgetter(client_id)
+        request.client = request.client or await self._clientgetter(client_id)
         scopes = request.client.default_scopes
         log.debug('Found default scopes %r', scopes)
         return scopes
 
-    def invalidate_authorization_code(self, client_id, code, request,
+    async def invalidate_authorization_code(self, client_id, code, request,
                                       *args, **kwargs):
         """Invalidate an authorization code after use.
 
@@ -913,28 +913,28 @@ class OAuth2RequestValidator(RequestValidator):
         function to destroy itself.
         """
         log.debug('Destroy grant token for client %r, %r', client_id, code)
-        grant = self._grantgetter(client_id=client_id, code=code)
+        grant = await self._grantgetter(client_id=client_id, code=code)
         if grant:
-            grant.delete()
+            await grant.delete()
 
-    def save_authorization_code(self, client_id, code, request,
+    async def save_authorization_code(self, client_id, code, request,
                                 *args, **kwargs):
         """Persist the authorization code."""
         log.debug(
             'Persist authorization code %r for client %r',
             code, client_id
         )
-        request.client = request.client or self._clientgetter(client_id)
-        self._grantsetter(client_id, code, request, *args, **kwargs)
+        request.client = request.client or await self._clientgetter(client_id)
+        await self._grantsetter(client_id, code, request, *args, **kwargs)
         return request.client.default_redirect_uri
 
-    def save_bearer_token(self, token, request, *args, **kwargs):
+    async def save_bearer_token(self, token, request, *args, **kwargs):
         """Persist the Bearer token."""
         log.debug('Save bearer token %r', token)
-        self._tokensetter(token, request, *args, **kwargs)
+        await self._tokensetter(token, request, *args, **kwargs)
         return request.client.default_redirect_uri
 
-    def validate_bearer_token(self, token, scopes, request):
+    async def validate_bearer_token(self, token, scopes, request):
         """Validate access token.
 
         :param token: A string of random characters
@@ -948,7 +948,7 @@ class OAuth2RequestValidator(RequestValidator):
             3) if the scopes are available
         """
         log.debug('Validate bearer token %r', token)
-        tok = self._tokengetter(access_token=token)
+        tok = await self._tokengetter(access_token=token)
         if not tok:
             msg = 'Bearer token not found.'
             request.error_message = msg
@@ -977,26 +977,26 @@ class OAuth2RequestValidator(RequestValidator):
         if hasattr(tok, 'client'):
             request.client = tok.client
         elif hasattr(tok, 'client_id'):
-            request.client = self._clientgetter(tok.client_id)
+            request.client = await self._clientgetter(tok.client_id)
         return True
 
-    def validate_client_id(self, client_id, request, *args, **kwargs):
+    async def validate_client_id(self, client_id, request, *args, **kwargs):
         """Ensure client_id belong to a valid and active client."""
         log.debug('Validate client %r', client_id)
-        client = request.client or self._clientgetter(client_id)
+        client = request.client or await self._clientgetter(client_id)
         if client:
             # attach client to request object
             request.client = client
             return True
         return False
 
-    def validate_code(self, client_id, code, client, request, *args, **kwargs):
+    async def validate_code(self, client_id, code, client, request, *args, **kwargs):
         """Ensure the grant code is valid."""
-        client = client or self._clientgetter(client_id)
+        client = client or await self._clientgetter(client_id)
         log.debug(
             'Validate code for client %r and code %r', client.client_id, code
         )
-        grant = self._grantgetter(client_id=client.client_id, code=code)
+        grant = await self._grantgetter(client_id=client.client_id, code=code)
         if not grant:
             log.debug('Grant not found.')
             return False
@@ -1010,7 +1010,7 @@ class OAuth2RequestValidator(RequestValidator):
         request.scopes = grant.scopes
         return True
 
-    def validate_grant_type(self, client_id, grant_type, client, request,
+    async def validate_grant_type(self, client_id, grant_type, client, request,
                             *args, **kwargs):
         """Ensure the client is authorized to use the grant type requested.
 
@@ -1048,7 +1048,7 @@ class OAuth2RequestValidator(RequestValidator):
 
         return True
 
-    def validate_redirect_uri(self, client_id, redirect_uri, request,
+    async def validate_redirect_uri(self, client_id, redirect_uri, request,
                               *args, **kwargs):
         """Ensure client is authorized to redirect to the redirect_uri.
 
@@ -1057,13 +1057,13 @@ class OAuth2RequestValidator(RequestValidator):
         redirect_uris strictly, you can add a `validate_redirect_uri`
         function on grant for a customized validation.
         """
-        request.client = request.client or self._clientgetter(client_id)
+        request.client = request.client or await self._clientgetter(client_id)
         client = request.client
         if hasattr(client, 'validate_redirect_uri'):
             return client.validate_redirect_uri(redirect_uri)
         return redirect_uri in client.redirect_uris
 
-    def validate_refresh_token(self, refresh_token, client, request,
+    async def validate_refresh_token(self, refresh_token, client, request,
                                *args, **kwargs):
         """Ensure the token is valid and belongs to the client
 
@@ -1072,7 +1072,7 @@ class OAuth2RequestValidator(RequestValidator):
         (also indirectly) and the refresh token grant.
         """
 
-        token = self._tokengetter(refresh_token=refresh_token)
+        token = await self._tokengetter(refresh_token=refresh_token)
 
         if token and token.client_id == client.client_id:
             # Make sure the request object contains user and client_id
@@ -1081,7 +1081,7 @@ class OAuth2RequestValidator(RequestValidator):
             return True
         return False
 
-    def validate_response_type(self, client_id, response_type, client, request,
+    async def validate_response_type(self, client_id, response_type, client, request,
                                *args, **kwargs):
         """Ensure client is authorized to use the response type requested.
 
@@ -1096,14 +1096,14 @@ class OAuth2RequestValidator(RequestValidator):
             return response_type in client.allowed_response_types
         return True
 
-    def validate_scopes(self, client_id, scopes, client, request,
+    async def validate_scopes(self, client_id, scopes, client, request,
                         *args, **kwargs):
         """Ensure the client is authorized access to requested scopes."""
         if hasattr(client, 'validate_scopes'):
             return client.validate_scopes(scopes)
         return set(client.default_scopes).issuperset(set(scopes))
 
-    def validate_user(self, username, password, client, request,
+    async def validate_user(self, username, password, client, request,
                       *args, **kwargs):
         """Ensure the username and password is valid.
 
@@ -1111,7 +1111,7 @@ class OAuth2RequestValidator(RequestValidator):
         """
         log.debug('Validating username %r and its password', username)
         if self._usergetter is not None:
-            user = self._usergetter(
+            user = await self._usergetter(
                 username, password, client, request, *args, **kwargs
             )
             if user:
@@ -1121,20 +1121,20 @@ class OAuth2RequestValidator(RequestValidator):
         log.debug('Password credential authorization is disabled.')
         return False
 
-    def revoke_token(self, token, token_type_hint, request, *args, **kwargs):
+    async def revoke_token(self, token, token_type_hint, request, *args, **kwargs):
         """Revoke an access or refresh token.
         """
         if token_type_hint:
-            tok = self._tokengetter(**{token_type_hint: token})
+            tok = await self._tokengetter(**{token_type_hint: token})
         else:
-            tok = self._tokengetter(access_token=token)
+            tok = await self._tokengetter(access_token=token)
             if not tok:
-                tok = self._tokengetter(refresh_token=token)
+                tok = await self._tokengetter(refresh_token=token)
 
         if tok:
             request.client_id = tok.client_id
             request.user = tok.user
-            tok.delete()
+            await tok.delete()
             return True
 
         msg = 'Invalid token supplied.'
