@@ -971,17 +971,15 @@ class OAuth2RequestValidator(RequestValidator):
             return False
 
         request.access_token = tok
-        if isawaitable(tok.user):
-            request.user = await tok.user
-        else:
-            request.user = tok.user
+        request.user = tok.user
+        if isawaitable(request.user):
+            request.user = await request.user
         request.scopes = scopes
 
         if hasattr(tok, 'client'):
-            if isawaitable(tok.client):
-                request.client = await tok.client
-            else:
-                request.client = tok.client
+            request.client = tok.client
+            if isawaitable(request.client):
+                request.client = await request.client
         elif hasattr(tok, 'client_id'):
             request.client = await self._clientgetter(tok.client_id)
         return True
@@ -1012,10 +1010,10 @@ class OAuth2RequestValidator(RequestValidator):
             return False
 
         request.state = kwargs.get('state')
-        if isawaitable(grant.user):
-            request.user = await grant.user
-        else:
-            request.user = grant.user
+
+        request.user = grant.user
+        if isawaitable(request.user):
+            request.user = await request.user
         request.scopes = grant.scopes
         return True
 
@@ -1053,10 +1051,9 @@ class OAuth2RequestValidator(RequestValidator):
             if not hasattr(client, 'user'):
                 log.debug('Client should have a user property')
                 return False
-            if isawaitable(client.user):
-                request.user = await client.user
-            else:
-                request.user = client.user
+            request.user = client.user
+            if isawaitable(request.user):
+                request.user = await request.user
 
         return True
 
@@ -1089,10 +1086,9 @@ class OAuth2RequestValidator(RequestValidator):
         if token and token.client_id == client.client_id:
             # Make sure the request object contains user and client_id
             request.client_id = token.client_id
-            if isawaitable(token.user):
-                request.user = await token.user
-            else:
-                request.user = token.user
+            request.user = token.user
+            if isawaitable(request.user):
+                request.user = await request.user
             return True
         return False
 
@@ -1148,10 +1144,9 @@ class OAuth2RequestValidator(RequestValidator):
 
         if tok:
             request.client_id = tok.client_id
-            if isawaitable(tok.user):
-                request.user = await tok.user
-            else:
-                request.user = tok.user
+            request.user = tok.user
+            if isawaitable(request.user):
+                request.user = await request.user
             await tok.delete()
             return True
 
