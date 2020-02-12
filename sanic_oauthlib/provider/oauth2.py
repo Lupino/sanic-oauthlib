@@ -976,8 +976,9 @@ class OAuth2RequestValidator(RequestValidator):
             request.user = await request.user
         request.scopes = scopes
 
-        if hasattr(tok, 'client'):
-            request.client = tok.client
+        client = getattr(tok, 'client', None)
+        if client:
+            request.client = client
             if isawaitable(request.client):
                 request.client = await request.client
         elif hasattr(tok, 'client_id'):
